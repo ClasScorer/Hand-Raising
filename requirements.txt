@@ -1,0 +1,10 @@
+opencv-python
+mediapipe
+matplotlib
+numpy
+fastapi>=0.68.0,<0.69.0
+starlette>=0.14.2,<0.15.0
+uvicorn
+python-multipart
+slowapi
+python-dotenv

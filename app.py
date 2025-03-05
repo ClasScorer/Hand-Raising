@@ -1,5 +1,5 @@
 import cv2
-import mediapipe as mp
+import mediapipe as mp # type: ignore
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -544,7 +544,7 @@ async def detect_hand_raising(
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         # Your existing hand detection logic here
-        is_hand_raised, confidence, hand_position = detect_hand_raising_in_image(image)
+        is_hand_raised, confidence, hand_position = detect_hand_raising_in_image(image) # type: ignore
 
         return HandRaisingResponse(
             student_id=student_id,

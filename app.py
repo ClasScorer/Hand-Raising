@@ -1,7 +1,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -104,6 +104,13 @@ class ErrorResponse(BaseModel):
                 "message": "File must be an image"
             }
         }
+
+class HandRaisingResponse(BaseModel):
+    student_id: str
+    timestamp: datetime
+    is_hand_raised: bool
+    confidence: float
+    hand_position: Optional[Dict[str, float]] = None
 
 # API Documentation
 API_DESCRIPTION = """
@@ -513,6 +520,43 @@ async def root() -> dict:
         "message": "Hand detection API is running",
         "version": settings.version
     }
+
+@app.post("/detect-hand-raising", response_model=HandRaisingResponse)
+async def detect_hand_raising(
+    request: Request,
+    file: UploadFile = File(...),
+    student_id: str = Form(...),
+    timestamp: str = Form(...)
+):
+    try:
+        # Validate timestamp format
+        try:
+            parsed_timestamp = datetime.fromisoformat(timestamp)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, 
+                detail="Invalid timestamp format. Expected ISO format"
+            )
+
+        # Process the image
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+        # Your existing hand detection logic here
+        is_hand_raised, confidence, hand_position = detect_hand_raising_in_image(image)
+
+        return HandRaisingResponse(
+            student_id=student_id,
+            timestamp=parsed_timestamp,
+            is_hand_raised=is_hand_raised,
+            confidence=confidence,
+            hand_position=hand_position
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

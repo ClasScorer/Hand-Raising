@@ -7,9 +7,21 @@ generator client {
   provider = "prisma-client-py"
 }
 
+enum HandRaisingStatus {
+  RAISED
+  NOT_RAISED
+  ON_FACE
+}
+
 model HandRaisingSchema {
-  studentId  String   @id
-  lectureId  String   @id
-  timestamp  DateTime @id
-  handRaised Boolean
+  studentId  String
+  lectureId  String
+  timestamp  DateTime
+  status     HandRaisingStatus @default(NOT_RAISED)
+  confidence Float             @default(0.0)
+  positionX  Float?
+  positionY  Float?
+  positionZ  Float?
+
+  @@id([studentId, lectureId, timestamp])
 }

@@ -1,131 +1,205 @@
 # Hand Raising Detection API
 
-A machine learning API that detects hand gestures in images, with a focus on identifying raised hands and hand-face interactions. Built with FastAPI, MediaPipe, and OpenCV.
+A FastAPI-based application that detects hand raising gestures in images using MediaPipe and stores the results in a PostgreSQL database using Prisma ORM.
 
 ## Features
 
-- **Hand Raise Detection**: Identifies when a hand is raised above wrist level in an image
-- **Face-Touch Detection**: Detects when hands are touching or near the face
-- **Multiple Hand Support**: Can detect and analyze up to 5 hands simultaneously
-- **Gesture Analysis**: Advanced landmark detection using MediaPipe
-- **Rate Limiting**: Built-in protection against API abuse
-- **Comprehensive Validation**: Robust input validation and error handling
-- **Docker Support**: Easy deployment with containerization
+- Hand raise detection using MediaPipe
+- Face interaction detection
+- Multiple hand support (up to 5 hands)
+- Database storage of detection results
+- Rate limiting and request tracking
+- Comprehensive error handling and logging
+- Swagger UI documentation
 
-## API Endpoints
-
-### POST `/detect-hand`
-
-Analyzes an uploaded image to detect hand gestures.
-
-**Responses:**
-- `Hand Raised`: At least one hand is raised above wrist level
-- `Hand Touching Face`: At least one hand is detected touching or near the face
-- `No Hand Raised`: Hands are detected but not raised
-- `No Hand Detected`: No hands were found in the image
-
-### GET `/`
-
-Health check endpoint to verify API status and version.
-
-## Requirements
+## Prerequisites
 
 - Python 3.8+
-- OpenCV
-- MediaPipe
-- FastAPI
-- Uvicorn
-- Docker (optional for containerized deployment)
+- PostgreSQL 13+
+- Docker and Docker Compose
+- Virtual Environment (venv)
 
-## Installation
-
-### Local Setup
+## Environment Setup
 
 1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd Hand-Raising
-   ```
+```bash
+git clone <repository-url>
+cd Hand-Raising
+```
 
 2. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Run the API:
-   ```bash
-   uvicorn app:app --reload
-   ```
-
-### Docker Setup
-
-1. Build the Docker image:
-   ```bash
-   docker build -t hand-detection-api .
-   ```
-
-2. Run the container:
-   ```bash
-   docker run -p 8000:8000 hand-detection-api
-   ```
-
-## Usage Examples
-
-### Python Client
-
-```python
-import requests
-
-url = "http://localhost:8000/detect-hand"
-image_path = "path/to/your/image.jpg"
-
-with open(image_path, "rb") as image_file:
-    files = {"file": (image_path, image_file, "image/jpeg")}
-    response = requests.post(url, files=files)
-
-result = response.json()
-print(f"Detection result: {result['result']}")
-print(f"Details: {result['details']}")
-```
-
-### cURL
-
 ```bash
-curl -X POST "http://localhost:8000/detect-hand" \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@path/to/your/image.jpg;type=image/jpeg"
+python -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
 ```
+
+3. Install required packages:
+```bash
+pip install -r requirements.txt
+```
+
+4. Create a `.env` file in the project root with the following variables:
+```env
+# Database Configuration
+DATABASE_URL="postgresql://username:password@localhost:5432/hand_raising_db"
+
+# Application Settings
+APP_DEBUG=true
+APP_MAX_IMAGE_SIZE=10485760  # 10MB in bytes
+APP_MIN_DETECTION_CONFIDENCE=0.7
+APP_MIN_TRACKING_CONFIDENCE=0.5
+APP_MAX_NUM_HANDS=5
+APP_MAX_NUM_FACES=1
+APP_HAND_FACE_DISTANCE_THRESHOLD=0.1
+```
+
+## Database Setup
+
+1. Start the PostgreSQL container:
+```bash
+docker compose up -d
+```
+
+2. Generate Prisma client and push the schema:
+```bash
+python -m prisma generate
+python -m prisma db push
+```
+
+## Running the Application
+
+1. Ensure the virtual environment is activated:
+```bash
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+```
+
+2. Start the FastAPI server:
+```bash
+uvicorn app:app --reload --log-level debug
+```
+
+The API will be available at `http://localhost:23122`
 
 ## API Documentation
 
 Once the server is running, you can access:
-- Interactive API documentation: http://localhost:8000/docs
-- ReDoc alternative documentation: http://localhost:8000/redoc
+- Swagger UI documentation: `http://localhost:23122/docs`
+- ReDoc documentation: `http://localhost:23122/redoc`
 
-## Configuration
+## API Endpoints
 
-The API can be configured using environment variables:
+### 1. Health Check
+```
+GET /
+```
+Verifies if the API is running and returns version information.
 
-| Environment Variable | Description | Default |
-|---------------------|-------------|---------|
-| APP_DEBUG | Enable debug mode | False |
-| APP_MAX_IMAGE_SIZE | Maximum file size in bytes | 10485760 (10MB) |
-| APP_MIN_DETECTION_CONFIDENCE | MediaPipe detection threshold | 0.7 |
-| APP_ALLOWED_ORIGINS | CORS allowed origins | * |
+### 2. Hand Detection
+```
+POST /detect-hand
+```
+Detects hand gestures in an uploaded image without storing results.
 
-## Limitations
+### 3. Hand Raising Detection and Storage
+```
+POST /detect-hand-raising
+```
+Detects hand raising and stores results in the database.
 
-- Maximum file size: 10MB
-- Supported image formats: JPEG, PNG
-- Rate limit: 10 requests per minute per IP
+Required form fields:
+- `file`: Image file (JPEG/PNG)
+- `student_id`: Student identifier
+- `lecture_id`: Lecture identifier
+- `timestamp`: ISO format timestamp (e.g., "2024-03-21T14:30:00")
+
+## Response Format
+
+### Success Response
+```json
+{
+    "student_id": "student123",
+    "timestamp": "2024-03-21T14:30:00",
+    "status": "RAISED",
+    "confidence": 0.95,
+    "hand_position": {
+        "x": 0.5,
+        "y": 0.3,
+        "z": 0.1
+    }
+}
+```
+
+### Hand Raising Status Values
+- `RAISED`: Hand is raised above the wrist level
+- `NOT_RAISED`: Hand is detected but not raised
+- `ON_FACE`: Hand is detected near or touching the face
+
+## Error Handling
+
+The API includes comprehensive error handling for:
+- Invalid file types
+- File size limits (max 10MB)
+- Invalid timestamp formats
+- Database connection issues
+- Rate limiting (10 requests per minute)
+
+## Development
+
+### Logging
+- Debug logs are enabled when `APP_DEBUG=true`
+- Logs include request IDs, processing times, and detailed error information
+- All logs are output to stdout
+
+### Database Schema
+The application uses Prisma ORM with the following schema:
+```prisma
+model HandRaisingSchema {
+    studentId  String
+    lectureId  String
+    timestamp  DateTime
+    status     HandRaisingStatus
+    confidence Float
+    positionX  Float?
+    positionY  Float?
+    positionZ  Float?
+
+    @@id([studentId, lectureId, timestamp])
+}
+```
+
+## Security Considerations
+
+1. Environment Variables:
+   - Never commit `.env` file to version control
+   - Use secure credentials in production
+   - Add `.env` to `.gitignore`
+
+2. Rate Limiting:
+   - Configured to 10 requests per minute per IP
+   - Can be adjusted in the code if needed
+
+3. File Upload Security:
+   - File size limited to 10MB
+   - Only image files (JPEG/PNG) are accepted
+   - File content validation before processing
+
+## Troubleshooting
+
+1. Database Connection Issues:
+   - Verify PostgreSQL container is running
+   - Check DATABASE_URL in .env
+   - Ensure database exists and is accessible
+
+2. Image Processing Errors:
+   - Verify image format (JPEG/PNG only)
+   - Check image is not corrupted
+   - Ensure image size is within limits
+
+3. Hand Detection Issues:
+   - Ensure good lighting in images
+   - Check if hands are clearly visible
+   - Verify confidence thresholds in .env
 
 ## License
 
-[MIT License](LICENSE)
+[Add your license information here]

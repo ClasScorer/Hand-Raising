@@ -7,4 +7,5 @@ starlette>=0.14.2,<0.15.0
 uvicorn
 python-multipart
 slowapi
-python-dotenv
+python-dotenv>=1.0.0
+prisma>=0.9.0

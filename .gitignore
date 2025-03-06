@@ -1,3 +1,7 @@
+# Environment variables
+.env
+.env.*
+
 # Python
 __pycache__/
 *.py[cod]
@@ -23,22 +27,33 @@ MANIFEST
 
 # Virtual Environment
 venv/
-env/
 ENV/
+env/
+.env/
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+.DS_Store
 
 # Logs
 *.log
 logs/
+log/
 
-# Environment variables
-.env
-.env.local
+# Database
+*.sqlite3
+*.db
+
+# Prisma
+generated/
+migrations/
+
+# Media files
+uploads/
+media/
 
 # Test coverage
 htmlcov/
@@ -49,15 +64,14 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
-
-# Project specific
-temp/
-uploads/
-test_images/
-
-# OS specific
-.DS_Store
-Thumbs.db
+.hypothesis/
 
 # Docker
-.dockerignore
+.docker/
+docker-compose.override.yml
+
+# Misc
+*.bak
+*.tmp
+*.temp
+.DS_Store

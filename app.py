@@ -545,6 +545,7 @@ async def detect_hand_raising(
 
         # Your existing hand detection logic here
         is_hand_raised, confidence, hand_position = detect_hand_raising_in_image(image) # type: ignore
+        #TODO: prisma push to db
 
         return HandRaisingResponse(
             student_id=student_id,

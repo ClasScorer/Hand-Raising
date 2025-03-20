@@ -5,7 +5,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Request, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel, BaseSettings, Field
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
 from enum import Enum
 import logging
 from typing import List, Optional, Set, Dict
@@ -15,52 +16,19 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import time
 from datetime import datetime
-from prisma import Prisma
-from dotenv import load_dotenv
-import os
-
-# Load environment variables
-load_dotenv()
-
-# Initialize FastAPI app
-app = FastAPI()
-
-# Initialize Prisma client with connection management
-prisma = Prisma()
-
-@app.on_event("startup")
-async def startup():
-    """Connect to the database when the app starts"""
-    try:
-        await prisma.connect()
-        logger.info("Successfully connected to the database")
-    except Exception as e:
-        logger.error(f"Failed to connect to database: {str(e)}")
-        # Re-raise the exception to prevent the app from starting with a broken DB connection
-        raise
-
-@app.on_event("shutdown")
-async def shutdown():
-    """Disconnect from the database when the app shuts down"""
-    try:
-        await prisma.disconnect()
-        logger.info("Successfully disconnected from the database")
-    except Exception as e:
-        logger.error(f"Error disconnecting from database: {str(e)}")
-        raise
 
 # Configuration management
 class Settings(BaseSettings):
     app_name: str = "Hand Detection API"
     version: str = "1.0.0"
-    debug: bool = os.getenv('APP_DEBUG', 'false').lower() == 'true'
+    debug: bool = False
     allowed_origins: Set[str] = {"*"}
-    max_image_size: int = int(os.getenv('APP_MAX_IMAGE_SIZE', 10 * 1024 * 1024))
-    min_detection_confidence: float = float(os.getenv('APP_MIN_DETECTION_CONFIDENCE', 0.7))
-    min_tracking_confidence: float = float(os.getenv('APP_MIN_TRACKING_CONFIDENCE', 0.5))
-    max_num_hands: int = int(os.getenv('APP_MAX_NUM_HANDS', 5))
-    max_num_faces: int = int(os.getenv('APP_MAX_NUM_FACES', 1))
-    hand_face_distance_threshold: float = float(os.getenv('APP_HAND_FACE_DISTANCE_THRESHOLD', 0.1))
+    max_image_size: int = 10 * 1024 * 1024  # 10MB
+    min_detection_confidence: float = 0.7
+    min_tracking_confidence: float = 0.5
+    max_num_hands: int = 5
+    max_num_faces: int = 1
+    hand_face_distance_threshold: float = 0.1
 
     class Config:
         env_prefix = "APP_"
@@ -77,18 +45,20 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Enhanced response models with examples
-class HandRaisingStatus(str, Enum):
+class HandDetectionResult(str, Enum):
     """
-    Possible states of hand raising detection.
+    Possible results from hand detection analysis.
     
     Values:
-        RAISED: Hand is raised above the wrist level
-        NOT_RAISED: Hand is detected but not raised
-        ON_FACE: Hand is detected near or touching the face
+        HAND_RAISED: A hand is raised above the wrist level
+        NO_HAND_RAISED: A hand is detected but not raised
+        HAND_TOUCHING_FACE: A hand is detected touching or near the face
+        NO_HAND_DETECTED: No hands were detected in the image
     """
-    RAISED = "RAISED"
-    NOT_RAISED = "NOT_RAISED"
-    ON_FACE = "ON_FACE"
+    HAND_RAISED = "Hand Raised"
+    NO_HAND_RAISED = "No Hand Raised"
+    HAND_TOUCHING_FACE = "Hand Touching Face"
+    NO_HAND_DETECTED = "No Hand Detected"
 
 class DetectionResponse(BaseModel):
     """
@@ -98,8 +68,8 @@ class DetectionResponse(BaseModel):
         description="Status of the request processing",
         example="success"
     )
-    result: HandRaisingStatus = Field(
-        description="The detected hand raising state"
+    result: HandDetectionResult = Field(
+        description="The detected hand gesture or state"
     )
     details: List[str] = Field(
         description="Additional details about the detection",
@@ -110,7 +80,7 @@ class DetectionResponse(BaseModel):
         schema_extra = {
             "example": {
                 "status": "success",
-                "result": "RAISED",
+                "result": "Hand Raised",
                 "details": ["Hands detected: 1"]
             }
         }
@@ -139,7 +109,7 @@ class ErrorResponse(BaseModel):
 class HandRaisingResponse(BaseModel):
     student_id: str
     timestamp: datetime
-    status: HandRaisingStatus
+    is_hand_raised: bool
     confidence: float
     hand_position: Optional[Dict[str, float]] = None
 
@@ -308,28 +278,27 @@ async def process_image(image_data) -> DetectionResponse:
 
         response = DetectionResponse(
             status="success",
-            result=HandRaisingStatus.NOT_RAISED,  # Default to not raised
+            result=HandDetectionResult.NO_HAND_DETECTED,
             details=[]
         )
 
-        if not results.multi_hand_landmarks:
-            response.details.append("No hands detected")
-            return response
-
-        num_hands = len(results.multi_hand_landmarks)
-        response.details.append(f"Hands detected: {num_hands}")
-        logger.info(f"Processing image with {num_hands} hands detected")
-
         face_landmarks = face_results.multi_face_landmarks[0] if face_results.multi_face_landmarks else None
 
-        for hand_landmarks in results.multi_hand_landmarks:
-            if face_landmarks and is_hand_touching_face(hand_landmarks, face_landmarks):
-                response.result = HandRaisingStatus.ON_FACE
-                break
-            
-            if is_hand_raised(hand_landmarks):
-                response.result = HandRaisingStatus.RAISED
-                break
+        if results.multi_hand_landmarks:
+            num_hands = len(results.multi_hand_landmarks)
+            response.details.append(f"Hands detected: {num_hands}")
+            logger.info(f"Processing image with {num_hands} hands detected")
+
+            for hand_landmarks in results.multi_hand_landmarks:
+                if face_landmarks and is_hand_touching_face(hand_landmarks, face_landmarks):
+                    response.result = HandDetectionResult.HAND_TOUCHING_FACE
+                    break
+                
+                if is_hand_raised(hand_landmarks):
+                    response.result = HandDetectionResult.HAND_RAISED
+                    break
+                else:
+                    response.result = HandDetectionResult.NO_HAND_RAISED
 
         return response
 
@@ -451,7 +420,7 @@ print(response.json())
 ```json
 {
     "status": "success",
-    "result": "RAISED",
+    "result": "Hand Raised",
     "details": ["Hands detected: 1"]
 }
 ```
@@ -553,181 +522,100 @@ async def root() -> dict:
         "version": settings.version
     }
 
-def detect_hand_raising_in_image(image) -> tuple[HandRaisingStatus, float, dict]:
+# Add this function just before the detect_hand_raising endpoint
+
+def detect_hand_raising_in_image(image):
     """
-    Detect if a hand is raised in the image.
+    Detects if a hand is raised in the image and returns detection details.
     
     Args:
         image: OpenCV image data
         
     Returns:
-        tuple: (status, confidence, hand_position)
-            - status (HandRaisingStatus): The detected hand raising status
-            - confidence (float): Confidence score of the detection
-            - hand_position (dict): Position data of the detected hand
+        tuple: (is_hand_raised, confidence, hand_position)
+            - is_hand_raised: Boolean indicating if a hand is raised
+            - confidence: Float confidence value (0-1)
+            - hand_position: Dictionary with x, y, z coordinates
     """
     try:
         rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb_image)
         
-        # Default return values
-        status = HandRaisingStatus.NOT_RAISED
+        # Default values if no hands detected
+        is_hand_raised = False
         confidence = 0.0
-        hand_position = {}
+        hand_position = {"x": 0.0, "y": 0.0, "z": 0.0}
         
-        if results.multi_hand_landmarks and results.multi_handedness:
-            # Get the first detected hand
+        if results.multi_hand_landmarks:
+            # Get landmarks for the first detected hand
             hand_landmarks = results.multi_hand_landmarks[0]
-            hand_handedness = results.multi_handedness[0]
             
-            # Get hand position data
-            wrist = hand_landmarks.landmark[0]  # Wrist landmark
+            # Determine if hand is raised
+            is_hand_raised = is_hand_raised(hand_landmarks)
+            
+            # Calculate confidence based on landmark visibility
+            visibility_sum = sum(lm.visibility for lm in hand_landmarks.landmark if hasattr(lm, 'visibility'))
+            landmark_count = sum(1 for lm in hand_landmarks.landmark if hasattr(lm, 'visibility'))
+            confidence = visibility_sum / max(landmark_count, 1) if landmark_count > 0 else 0.8
+            
+            # If no visibility attribute, use a default confidence
+            if confidence == 0:
+                confidence = 0.8 if is_hand_raised else 0.5
+            
+            # Extract position of index finger tip (landmark 8) for position
+            index_tip = hand_landmarks.landmark[8]
             hand_position = {
-                'x': wrist.x,
-                'y': wrist.y,
-                'z': wrist.z
+                "x": index_tip.x,
+                "y": index_tip.y,
+                "z": index_tip.z if hasattr(index_tip, 'z') else 0.0
             }
-            
-            # Calculate confidence based on landmark detection scores
-            confidence = float(hand_handedness.classification[0].score)
-            
-            # Check if hand is touching face
-            face_results = face_mesh.process(rgb_image)
-            face_landmarks = face_results.multi_face_landmarks[0] if face_results.multi_face_landmarks else None
-            
-            if face_landmarks and is_hand_touching_face(hand_landmarks, face_landmarks):
-                status = HandRaisingStatus.ON_FACE
-            # Calculate if hand is raised using existing logic
-            elif is_hand_raised(hand_landmarks):
-                status = HandRaisingStatus.RAISED
-            
-            logger.info(f"Hand detection: status={status}, confidence={confidence:.2f}")
-        else:
-            logger.info("No hands detected in the image")
-            
-        return status, confidence, hand_position
         
+        return is_hand_raised, confidence, hand_position
+    
     except Exception as e:
         logger.error(f"Error in hand raising detection: {str(e)}")
-        raise
+        # Return default values in case of error
+        return False, 0.0, {"x": 0.0, "y": 0.0, "z": 0.0}
+
+
 
 @app.post("/detect-hand-raising", response_model=HandRaisingResponse)
 async def detect_hand_raising(
     request: Request,
     file: UploadFile = File(...),
     student_id: str = Form(...),
-    timestamp: str = Form(...),
-    lecture_id: str = Form(...)
+    timestamp: str = Form(...)
 ):
     try:
-        logger.info(f"Processing hand raising detection - Request ID: {request.state.request_id}")
-        logger.debug(f"Parameters - student_id: {student_id}, lecture_id: {lecture_id}, timestamp: {timestamp}")
-        
         # Validate timestamp format
         try:
             parsed_timestamp = datetime.fromisoformat(timestamp)
-        except ValueError as e:
-            logger.warning(f"Invalid timestamp format: {timestamp} - Request ID: {request.state.request_id}")
+        except ValueError:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Invalid timestamp format. Expected ISO format (e.g., 2024-03-21T14:30:00). Error: {str(e)}"
+                detail="Invalid timestamp format. Expected ISO format"
             )
 
         # Process the image
-        try:
-            contents = await file.read()
-            nparr = np.frombuffer(contents, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if image is None:
-                logger.error(f"Failed to decode image - Request ID: {request.state.request_id}")
-                raise HTTPException(status_code=400, detail="Invalid image file or format")
-                
-            logger.info(f"Successfully decoded image - Request ID: {request.state.request_id}")
-        except Exception as img_error:
-            logger.error(f"Error processing image: {str(img_error)} - Request ID: {request.state.request_id}")
-            raise HTTPException(status_code=400, detail=f"Error processing image: {str(img_error)}")
+        contents = await file.read()
+        nparr = np.frombuffer(contents, np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-        # Detect hand raising
-        try:
-            status, confidence, hand_position = detect_hand_raising_in_image(image)
-            logger.info(f"Hand detection results - status: {status}, confidence: {confidence:.2f} - Request ID: {request.state.request_id}")
-        except Exception as detect_error:
-            logger.error(f"Error in hand detection: {str(detect_error)} - Request ID: {request.state.request_id}")
-            raise HTTPException(status_code=500, detail=f"Error in hand detection: {str(detect_error)}")
+        # Your existing hand detection logic here
+        is_hand_raised, confidence, hand_position = detect_hand_raising_in_image(image) # type: ignore
+        #TODO: prisma push to db
 
-        # Push to database using Prisma
-        try:
-            # Ensure database connection
-            if not prisma.is_connected():
-                logger.warning("Prisma client not connected, attempting to reconnect...")
-                await prisma.connect()
-                
-            await prisma.handraisingschema.create(
-                data={
-                    'studentId': student_id,
-                    'lectureId': lecture_id,
-                    'timestamp': parsed_timestamp,
-                    'status': status,
-                    'confidence': confidence,
-                    'positionX': hand_position.get('x'),
-                    'positionY': hand_position.get('y'),
-                    'positionZ': hand_position.get('z')
-                }
-            )
-            logger.info(f"Successfully saved to database - Request ID: {request.state.request_id}")
-            
-            return HandRaisingResponse(
-                student_id=student_id,
-                timestamp=parsed_timestamp,
-                status=status,
-                confidence=confidence,
-                hand_position=hand_position if hand_position else None
-            )
-            
-        except Exception as db_error:
-            logger.error(f"Database error: {str(db_error)} - Request ID: {request.state.request_id}")
-            # Check if it's a connection error and try to reconnect
-            if "not connected" in str(db_error).lower():
-                try:
-                    await prisma.connect()
-                    # Retry the operation
-                    await prisma.handraisingschema.create(
-                        data={
-                            'studentId': student_id,
-                            'lectureId': lecture_id,
-                            'timestamp': parsed_timestamp,
-                            'status': status,
-                            'confidence': confidence,
-                            'positionX': hand_position.get('x'),
-                            'positionY': hand_position.get('y'),
-                            'positionZ': hand_position.get('z')
-                        }
-                    )
-                    logger.info("Successfully saved to database after reconnection")
-                    return HandRaisingResponse(
-                        student_id=student_id,
-                        timestamp=parsed_timestamp,
-                        status=status,
-                        confidence=confidence,
-                        hand_position=hand_position if hand_position else None
-                    )
-                except Exception as retry_error:
-                    logger.error(f"Failed to reconnect and save to database: {str(retry_error)}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Database connection error. Please try again later."
-                    )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to save hand raising data to database: {str(db_error)}"
-            )
+        return HandRaisingResponse(
+            student_id=student_id,
+            timestamp=parsed_timestamp,
+            is_hand_raised=is_hand_raised,
+            confidence=confidence,
+            hand_position=hand_position
+        )
 
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Unexpected error processing request: {str(e)} - Request ID: {request.state.request_id}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        logger.error(f"Error processing request: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

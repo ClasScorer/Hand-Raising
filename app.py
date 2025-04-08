@@ -192,23 +192,13 @@ app.add_middleware(
 
 # Initialize Mediapipe components
 try:
+    # Initialize once
     mp_hands = mp.solutions.hands
-    mp_face_mesh = mp.solutions.face_mesh
-    mp_drawing = mp.solutions.drawing_utils
+    mp_face = mp.solutions.face_mesh
 
-    hands = mp_hands.Hands(
-        static_image_mode=True,
-        max_num_hands=settings.max_num_hands,
-        min_detection_confidence=settings.min_detection_confidence,
-        min_tracking_confidence=settings.min_tracking_confidence
-    )
-    
-    face_mesh = mp_face_mesh.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=settings.max_num_faces,
-        min_detection_confidence=settings.min_detection_confidence,
-        min_tracking_confidence=settings.min_tracking_confidence
-    )
+    hands = mp_hands.Hands(static_image_mode=True, max_num_hands=settings.max_num_hands, min_detection_confidence=settings.min_detection_confidence)
+    face_mesh = mp_face.FaceMesh(static_image_mode=True, max_num_faces=settings.max_num_faces)
+
 except Exception as e:
     logger.error(f"Failed to initialize Mediapipe components: {str(e)}")
     raise
@@ -241,7 +231,31 @@ def is_hand_touching_face(hand_landmarks, face_landmarks, threshold: float = set
         logger.error(f"Error in hand-face detection: {str(e)}")
         return False
 
-def is_hand_raised(hand_landmarks) -> bool:
+def get_confidence(results) -> float:
+    try:
+        confidence = results.multi_handedness[0].classification[0].score
+        return confidence
+    except Exception as e:
+        logger.error(f"Error in get_confidence: {str(e)}")
+        return 0.6
+
+def get_position(hand_landmarks):
+    try:
+        wrist = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST]
+        wrist_y = wrist.y * height
+        wrist_x = wrist.x * width
+
+        hand_position = {"x": wrist_x, "y": wrist_y}
+        return hand_position
+
+    except Exception as e:
+        logger.error(f"Error in get_position: {str(e)}")
+        return 0
+ 
+
+
+
+def is_hand_raised(hand_landmarks,height,width,head_y) -> bool:
     """
     Check if the hand is raised.
     
@@ -252,11 +266,12 @@ def is_hand_raised(hand_landmarks) -> bool:
         bool: True if hand is raised, False otherwise
     """
     try:
-        wrist_y = hand_landmarks.landmark[0].y
-        thumb_tip_y = hand_landmarks.landmark[4].y
-        index_tip_y = hand_landmarks.landmark[8].y
+        wrist = hand_landmarks.landmark[mp_hands.HandLandmark.WRIST]
+        wrist_y = wrist.y * height 
+        wrist_x = wrist.x * width
+        is_raised = wrist_y < head_y
         
-        return thumb_tip_y < wrist_y and index_tip_y < wrist_y
+        return is_raised
     except Exception as e:
         logger.error(f"Error in hand raise detection: {str(e)}")
         return False
@@ -275,6 +290,9 @@ async def process_image(image_data) -> DetectionResponse:
         rgb_image = cv2.cvtColor(image_data, cv2.COLOR_BGR2RGB)
         results = hands.process(rgb_image)
         face_results = face_mesh.process(rgb_image)
+        height, width, _ = image_data.shape
+        head_y = int(height * 0.3)
+
 
         response = DetectionResponse(
             status="success",
@@ -283,6 +301,9 @@ async def process_image(image_data) -> DetectionResponse:
         )
 
         face_landmarks = face_results.multi_face_landmarks[0] if face_results.multi_face_landmarks else None
+        if face_results.multi_face_landmarks:
+            nose_tip = face_results.multi_face_landmarks[0].landmark[1]
+            head_y = int(nose_tip.y * height)
 
         if results.multi_hand_landmarks:
             num_hands = len(results.multi_hand_landmarks)
@@ -290,11 +311,7 @@ async def process_image(image_data) -> DetectionResponse:
             logger.info(f"Processing image with {num_hands} hands detected")
 
             for hand_landmarks in results.multi_hand_landmarks:
-                if face_landmarks and is_hand_touching_face(hand_landmarks, face_landmarks):
-                    response.result = HandDetectionResult.HAND_TOUCHING_FACE
-                    break
-                
-                if is_hand_raised(hand_landmarks):
+                if is_hand_raised(hand_landmarks,height,width,head_y):
                     response.result = HandDetectionResult.HAND_RAISED
                     break
                 else:
@@ -554,9 +571,7 @@ def detect_hand_raising_in_image(image):
             is_hand_raised = is_hand_raised(hand_landmarks)
             
             # Calculate confidence based on landmark visibility
-            visibility_sum = sum(lm.visibility for lm in hand_landmarks.landmark if hasattr(lm, 'visibility'))
-            landmark_count = sum(1 for lm in hand_landmarks.landmark if hasattr(lm, 'visibility'))
-            confidence = visibility_sum / max(landmark_count, 1) if landmark_count > 0 else 0.8
+            confidence = get_confidence(results)
             
             # If no visibility attribute, use a default confidence
             if confidence == 0:
@@ -564,11 +579,7 @@ def detect_hand_raising_in_image(image):
             
             # Extract position of index finger tip (landmark 8) for position
             index_tip = hand_landmarks.landmark[8]
-            hand_position = {
-                "x": index_tip.x,
-                "y": index_tip.y,
-                "z": index_tip.z if hasattr(index_tip, 'z') else 0.0
-            }
+            hand_position = get_position(hand_landmarks)
         
         return is_hand_raised, confidence, hand_position
     
